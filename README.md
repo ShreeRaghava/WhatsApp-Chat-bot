@@ -1,13 +1,13 @@
-# Opal + Google Cloud Functions — Order Tracking (Demo / Portfolio)
+# Opal + Google Cloud Functions — Order Tracking 
 
-This repository is a **showcase / demo** implementation of a WhatsApp Order Tracking automation using:
+This repository is an implementation of a WhatsApp Order Tracking automation using:
 
 - **Google Opal** (visual orchestrator) — flow JSON included as `opal_flow.json` (placeholder values).
 - **Google Cloud Function** (`index.js`) — Node.js implementation of `getOrderStatus`.
 - **GitHub Actions** workflow (`.github/workflows/deploy.yml`) — deploy to Google Cloud Functions (uses repository secrets).
 - **Local test harness** (`test/local_test.js`) — to run against a local functions emulator.
 
-> IMPORTANT: This repository is for demonstration and portfolio purposes. **Do not commit real secrets**. Replace `{{...}}` placeholders with real values only when deploying to a real environment. For portfolio, keep placeholder values.
+> IMPORTANT: This repository is for demonstration purposes. **Do not commit real secrets**. Replace `{{...}}` placeholders with real values only when deploying to a real environment, and keep placeholder values.
 
 ## Files
 - `index.js` — Cloud Function code (Node.js)
