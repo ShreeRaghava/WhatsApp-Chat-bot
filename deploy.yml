@@ -1,0 +1,31 @@
+name: Deploy Cloud Function
+on:
+  push:
+    branches: [ main ]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT }}
+      - name: Install dependencies
+        run: npm ci
+      - name: Deploy Cloud Function
+        env:
+          ORDER_API_URL: ${{ secrets.ORDER_API_URL }}
+          ORDER_API_KEY: ${{ secrets.ORDER_API_KEY }}
+          GCP_REGION: ${{ secrets.GCP_REGION }}
+          OPAL_SA_EMAIL: ${{ secrets.OPAL_SA_EMAIL }}
+        run: |
+          gcloud functions deploy getOrderStatus \
+            --gen2 \
+            --runtime=nodejs18 \
+            --region=$GCP_REGION \
+            --entry-point=getOrderStatus \
+            --trigger-http \
+            --service-account=$OPAL_SA_EMAIL \
+            --set-env-vars=ORDER_API_URL=$ORDER_API_URL,ORDER_API_KEY=$ORDER_API_KEY

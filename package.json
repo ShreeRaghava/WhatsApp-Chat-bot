@@ -1,0 +1,13 @@
+{
+  "name": "get-order-status",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "functions-framework --target=getOrderStatus",
+    "test": "node ./test/local_test.js"
+  },
+  "dependencies": {
+    "node-fetch": "^2.6.7",
+    "@google-cloud/functions-framework": "^3.1.3"
+  }
+}

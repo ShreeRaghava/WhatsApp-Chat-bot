@@ -1,0 +1,269 @@
+{
+  "flow_id": "order-tracking-flow-v1",
+  "metadata": {
+    "name": "WhatsApp Order Tracking",
+    "description": "Webhook -> Intent parse -> Cloud Function lookup -> Response / Handover",
+    "created_by": "automation-team",
+    "version": "1.0"
+  },
+  "nodes": [
+    {
+      "id": "n_webhook",
+      "type": "webhook",
+      "name": "Entry Webhook - WhatsApp",
+      "config": {
+        "path": "/opal/webhook/whatsapp",
+        "method": "POST",
+        "validate_signature": true,
+        "signature_header": "X-Hub-Signature",
+        "required_fields": [
+          "message",
+          "from",
+          "id"
+        ]
+      },
+      "next": "n_verify"
+    },
+    {
+      "id": "n_verify",
+      "type": "function",
+      "name": "Verify & Normalize",
+      "config": {
+        "script": "/* verify signature if present; normalize payload to { phone_number, message_text, message_id, timestamp } */"
+      },
+      "next": "n_ai_intent"
+    },
+    {
+      "id": "n_ai_intent",
+      "type": "ai",
+      "name": "Intent & Entity Extractor",
+      "config": {
+        "model": "opal-ai-v1",
+        "system_prompt": "You are a strict parser for order tracking requests. Return JSON only: { \"intent\": \"order_tracking|faq|other\", \"order_id\": string|null, \"customer_name\": string|null, \"confidence\":0.0-1.0 }\\nExtraction rules: Order IDs look like #12345, ORD-12345, or 8-12 alphanum. Prefer null over guessing.",
+        "timeout_ms": 2000
+      },
+      "next": "n_route"
+    },
+    {
+      "id": "n_route",
+      "type": "switch",
+      "name": "Route by Intent",
+      "config": {
+        "cases": [
+          {
+            "condition": "intent == 'faq'",
+            "target": "n_faq"
+          },
+          {
+            "condition": "intent == 'order_tracking'",
+            "target": "n_validate_entities"
+          }
+        ],
+        "default": "n_fallback"
+      }
+    },
+    {
+      "id": "n_validate_entities",
+      "type": "function",
+      "name": "Validate Entities",
+      "config": {
+        "script": "/* if order_id is null -> send AskOrderId node; else continue */"
+      },
+      "next": "n_transform_request"
+    },
+    {
+      "id": "n_ask_order",
+      "type": "send_message",
+      "name": "Ask for Order ID",
+      "config": {
+        "channel": "whatsapp",
+        "template": "We couldn't find an order ID in your message. Please reply with the order ID (e.g., ORD-12345) or the last 4 digits of the phone used to buy."
+      },
+      "next": "n_wait_for_reply"
+    },
+    {
+      "id": "n_wait_for_reply",
+      "type": "wait",
+      "name": "Wait for user reply",
+      "config": {
+        "timeout_seconds": 300
+      },
+      "next": "n_ai_intent"
+    },
+    {
+      "id": "n_transform_request",
+      "type": "transform",
+      "name": "Prepare Cloud Function Payload",
+      "config": {
+        "template": {
+          "order_id": "{{order_id}}",
+          "phone_number": "{{phone_number}}",
+          "customer_name": "{{customer_name}}",
+          "message_id": "{{message_id}}",
+          "channel": "whatsapp"
+        }
+      },
+      "next": "n_http_lookup"
+    },
+    {
+      "id": "n_http_lookup",
+      "type": "http_request",
+      "name": "Call getOrderStatus Cloud Function",
+      "config": {
+        "method": "POST",
+        "url": "{{CLOUD_FUNCTION_URL}}",
+        "auth": {
+          "type": "oidc_token",
+          "service_account": "{{OPAL_SA_EMAIL}}"
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{{payload}}",
+        "retries": 2,
+        "timeout_ms": 5000
+      },
+      "next": "n_process_lookup"
+    },
+    {
+      "id": "n_process_lookup",
+      "type": "transform",
+      "name": "Parse Cloud Function Response",
+      "config": {
+        "script": "/* parse response JSON into flow vars: lookup_status, order, error_code */"
+      },
+      "next": "n_lookup_switch"
+    },
+    {
+      "id": "n_lookup_switch",
+      "type": "switch",
+      "name": "Evaluate lookup_status",
+      "config": {
+        "cases": [
+          {
+            "condition": "lookup_status == 'ok'",
+            "target": "n_success_response"
+          },
+          {
+            "condition": "lookup_status == 'not_found'",
+            "target": "n_not_found_handling"
+          },
+          {
+            "condition": "lookup_status == 'error'",
+            "target": "n_transient_error"
+          }
+        ],
+        "default": "n_transient_error"
+      }
+    },
+    {
+      "id": "n_not_found_handling",
+      "type": "function",
+      "name": "Not Found Handling",
+      "config": {
+        "script": "/* increment retry_count; if retry_count < 3 -> Ask for Order ID; else -> handover */"
+      },
+      "next": "n_decide_retry"
+    },
+    {
+      "id": "n_decide_retry",
+      "type": "switch",
+      "name": "Retry Decision",
+      "config": {
+        "cases": [
+          {
+            "condition": "retry_count < 3",
+            "target": "n_ask_order"
+          },
+          {
+            "condition": "retry_count >= 3",
+            "target": "n_handover"
+          }
+        ]
+      }
+    },
+    {
+      "id": "n_transient_error",
+      "type": "send_message",
+      "name": "Transient Error Message",
+      "config": {
+        "channel": "whatsapp",
+        "template": "Apologies \u2014 we are having trouble fetching your order right now. I have notified our team and will reconnect you when available."
+      },
+      "next": "n_handover_if_needed"
+    },
+    {
+      "id": "n_success_response",
+      "type": "send_message",
+      "name": "Send Success Response",
+      "config": {
+        "channel": "whatsapp",
+        "template": "Hi {{customer_name || 'there'}}, here\\'s the status for order *{{order.id}}*:\\n\u2022 Status: {{order.status}}\\n\u2022 ETA: {{order.estimated_delivery || 'N/A'}}\\nReply \\\"speak to a manager\\\" to connect to a human."
+      },
+      "next": "n_log_and_finish"
+    },
+    {
+      "id": "n_handover",
+      "type": "function",
+      "name": "Trigger Handover",
+      "config": {
+        "script": "/* create CRM ticket, notify Slack/email, set conversation tag in WhatsApp */"
+      },
+      "next": "n_notify_agent"
+    },
+    {
+      "id": "n_notify_agent",
+      "type": "http_request",
+      "name": "Notify Support (CRM/Slack)",
+      "config": {
+        "method": "POST",
+        "url": "{{CRM_TICKET_ENDPOINT}}",
+        "headers": {
+          "Authorization": "Bearer {{CRM_API_KEY}}",
+          "Content-Type": "application/json"
+        },
+        "body": "{\"order_id\":\"{{order_id}}\",\"phone\":\"{{phone_number}}\",\"summary\":\"Order lookup failed after 3 attempts\"}"
+      },
+      "next": "n_end"
+    },
+    {
+      "id": "n_log_and_finish",
+      "type": "log",
+      "name": "Log Success",
+      "config": {
+        "level": "info",
+        "message": "order_tracked_success"
+      },
+      "next": "n_end"
+    },
+    {
+      "id": "n_faq",
+      "type": "ai",
+      "name": "FAQ Answerer",
+      "config": {
+        "model": "opal-ai-v1",
+        "prompt_template": "Use KB to answer short FAQs"
+      },
+      "next": "n_end"
+    },
+    {
+      "id": "n_fallback",
+      "type": "send_message",
+      "name": "Fallback Clarify",
+      "config": {
+        "channel": "whatsapp",
+        "template": "Sorry \u2014 I didn't understand. Could you rephrase or say 'order status' with your order ID?"
+      },
+      "next": "n_wait_for_reply"
+    },
+    {
+      "id": "n_end",
+      "type": "end",
+      "name": "End Flow",
+      "config": {}
+    }
+  ],
+  "flow_vars": {
+    "retry_count": 0
+  }
+}
