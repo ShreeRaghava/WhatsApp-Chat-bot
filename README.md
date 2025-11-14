@@ -57,7 +57,7 @@ This repository is an implementation of a WhatsApp Order Tracking automation usi
 - `ORDER_API_URL`
 - `ORDER_API_KEY`
 
-## Notes for portfolio
+## Notes for placeholders
 - Keep `ORDER_API_KEY` placeholders.
 - Update `README.md` to describe your role, decisions, and architecture choices.
 - Add screenshots of Opal canvas and Cloud Function logs for visual proof.
